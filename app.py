@@ -1,37 +1,41 @@
-from flask import Flask, render_template, request, jsonify
 import os
-import psycopg2
-from psycopg2.extras import RealDictCursor
-from datetime import datetime
+from flask import Flask, render_template, send_from_directory
+from flask_cors import CORS
 
-app = Flask(__name__)
+# Initialize Flask pointing to the landing subfolder
+app = Flask(__name__, static_folder='static/landing', static_url_path='')
+CORS(app)
 
-# Load Google API key from environment variable (recommended)
-GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY", "key")
-
-# Database configuration
-DB_CONFIG = {
-    'dbname': os.getenv('DB_NAME', 'pollen_db'),
-    'user': os.getenv('DB_USER', 'postgres'),
-    'password': os.getenv('DB_PASSWORD', 'postgres'),
-    'host': os.getenv('DB_HOST', 'localhost'),
-    'port': os.getenv('DB_PORT', '5432')
-}
-
-def get_db_connection():
-    """Create a database connection"""
-    return psycopg2.connect(**DB_CONFIG)
+# Use absolute paths to prevent Vercel environment confusion
+BASE_DIR = os.getcwd()
 
 @app.route("/")
-def index():
-    return render_template("index.html", google_api_key=GOOGLE_API_KEY)
+def serve_landing():
+    """Serves index.html from static/landing/"""
+    return send_from_directory(app.static_folder, 'index.html')
+
+@app.route('/assets/<path:path>')
+def serve_assets(path):
+    """Serves JS/CSS from static/landing/assets/"""
+    return send_from_directory(os.path.join(app.static_folder, 'assets'), path)
+
+@app.route("/map")
+def serve_map():
+    """Serves map app using the template in /templates/"""
+    return render_template("index.html")
+
+@app.route('/static/<path:filename>')
+def serve_icons(filename):
+    """Serves icons sitting directly in /static/ (cursor, mini, point)"""
+    return send_from_directory(os.path.join(BASE_DIR, 'static'), filename)
+
+# --- API ROUTES ---
 
 @app.route("/api/reviews", methods=['POST'])
 def create_review():
-    """Create a new allergy review"""
+    """Create a new allergy review in the Neon database."""
     try:
         data = request.json
-        
         conn = get_db_connection()
         cur = conn.cursor()
         
@@ -41,12 +45,8 @@ def create_review():
             VALUES (%s, %s, %s, %s, %s, %s, %s)
             RETURNING id, created_at
         """, (
-            data['centerLat'],
-            data['centerLng'],
-            data['radiusKm'],
-            data['pollenType'],
-            data['severity'],
-            data.get('symptoms', []),
+            data['centerLat'], data['centerLng'], data['radiusKm'],
+            data['pollenType'], data['severity'], data.get('symptoms', []),
             data.get('reviewText', '')
         ))
         
@@ -62,12 +62,11 @@ def create_review():
         }), 201
         
     except Exception as e:
-        print(f"Error creating review: {e}")
         return jsonify({'success': False, 'error': str(e)}), 500
 
 @app.route("/api/reviews", methods=['GET'])
 def get_reviews():
-    """Get all allergy reviews"""
+    """Fetch reviews from the Neon database."""
     try:
         conn = get_db_connection()
         cur = conn.cursor(cursor_factory=RealDictCursor)
@@ -87,8 +86,6 @@ def get_reviews():
         return jsonify({'success': True, 'reviews': reviews}), 200
         
     except Exception as e:
-        print(f"Error fetching reviews: {e}")
         return jsonify({'success': False, 'error': str(e)}), 500
 
-if __name__ == "__main__":
-    app.run(debug=True)
+# Note: app.run() is omitted. Vercel handles execution via vercel.json.
